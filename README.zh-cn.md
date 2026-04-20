@@ -109,7 +109,7 @@
 
 1. 在仓库 Settings → Pages 中启用 **GitHub Actions** 作为部署来源。
 2. 在仓库 Secrets and variables → Actions 中添加：
-   - `GITHUB_STARS_OWNER`：你的 GitHub 用户名
+   - `STARS_OWNER`：你的 GitHub 用户名
    - `GH_PAT`：可读取 starred repositories 的 Personal Access Token
 3. 如需手动修正分类、备注、置顶或隐藏仓库，编辑 `data/overrides.json`。
 
