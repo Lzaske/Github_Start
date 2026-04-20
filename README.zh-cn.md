@@ -97,6 +97,36 @@
 
 ## 安装
 
+## 我的 GitHub Stars 导航页
+
+我把自己的 GitHub Stars 自动汇总到了一个可搜索、可分类的页面里，方便后续查找。
+
+- 在线浏览：启用 GitHub Pages 后填写仓库 Pages 地址
+- 数据来源：GitHub Stars
+- 更新方式：每日自动同步，也支持手动触发 GitHub Actions
+
+### 启用方式
+
+1. 在仓库 Settings → Pages 中启用 **GitHub Actions** 作为部署来源。
+2. 在仓库 Secrets and variables → Actions 中添加：
+   - `GITHUB_STARS_OWNER`：你的 GitHub 用户名
+   - `GH_PAT`：可读取 starred repositories 的 Personal Access Token
+3. 如需手动修正分类、备注、置顶或隐藏仓库，编辑 `data/overrides.json`。
+
+### `data/overrides.json` 示例
+
+```json
+{
+  "microsoft/playwright": {
+    "category": "Automation",
+    "pinned": true,
+    "note": "浏览器自动化与端到端测试",
+    "weight": 10,
+    "hidden": false
+  }
+}
+```
+
 ### 给人类看的
 
 复制并粘贴以下提示词到你的 LLM Agent (Claude Code, AmpCode, Cursor 等):
