@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "data:fetch": "node scripts/fetch-stars.mjs",
+    "data:translate": "node scripts/translate-descriptions.mjs",
     "data:build": "node scripts/build-stars-data.mjs"
   },
   "devDependencies": {

@@ -111,7 +111,18 @@
 2. 在仓库 Secrets and variables → Actions 中添加：
    - `STARS_OWNER`：你的 GitHub 用户名
    - `GH_PAT`：可读取 starred repositories 的 Personal Access Token
+   - `TRANSLATION_API_KEY`：翻译服务的 API Key（启用中文描述时需要）
 3. 如需手动修正分类、备注、置顶或隐藏仓库，编辑 `data/overrides.json`。
+4. 若要启用仓库描述翻译，在 Actions 或本地环境中设置：
+   - `TRANSLATION_PROVIDER`：翻译提供商名称（GitHub Actions 建议放在 Variables）
+   - `TRANSLATION_API_KEY`：对应提供商的 API Key
+
+### 中文描述翻译
+
+- 工作流会在 `data:build` 之前先执行 `data:translate`，将仓库英文描述写入 `data/translations.json`。
+- 当翻译命中时，页面默认显示中文描述；若没有翻译结果，会自动回退到原始描述。
+- 搜索会同时匹配原始描述与中文描述，因此用中文关键词也能找到对应仓库。
+- 若未配置翻译提供商或 API Key，翻译步骤会安全跳过，不影响数据构建与站点发布。
 
 ### `data/overrides.json` 示例
 

@@ -19,7 +19,7 @@ export function filterRepos(repos: StarRepo[], state: FilterState) {
     .filter((repo) => {
       if (!query) return true
 
-      return [repo.fullName, repo.description, repo.note, repo.language, ...repo.topics]
+      return [repo.fullName, repo.description, repo.descriptionZh, repo.note, repo.language, ...repo.topics]
         .join(' ')
         .toLowerCase()
         .includes(query)

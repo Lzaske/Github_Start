@@ -10,6 +10,8 @@ const repos: StarRepo[] = [
     owner: 'anthropic',
     url: 'https://github.com/anthropic/claude-code',
     description: 'Coding agent',
+    descriptionZh: '编程智能体',
+    translationStatus: 'translated',
     homepage: '',
     language: 'TypeScript',
     stars: 1200,
@@ -30,6 +32,8 @@ const repos: StarRepo[] = [
     owner: 'microsoft',
     url: 'https://github.com/microsoft/playwright',
     description: 'Browser automation',
+    descriptionZh: '',
+    translationStatus: 'fallback',
     homepage: '',
     language: 'TypeScript',
     stars: 800,
@@ -50,6 +54,8 @@ const repos: StarRepo[] = [
     owner: 'hidden',
     url: 'https://github.com/hidden/repo',
     description: 'Hidden repo',
+    descriptionZh: '',
+    translationStatus: 'skipped',
     homepage: '',
     language: 'Python',
     stars: 10,
@@ -91,5 +97,17 @@ describe('filterRepos', () => {
 
     expect(result).toHaveLength(1)
     expect(result[0]?.fullName).toBe('microsoft/playwright')
+  })
+
+  it('searches translated chinese descriptions when present', () => {
+    const result = filterRepos(repos, {
+      query: '智能体',
+      category: 'ALL',
+      language: 'ALL',
+      sort: 'starred'
+    })
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.fullName).toBe('anthropic/claude-code')
   })
 })

@@ -14,6 +14,8 @@ const payload: StarsPayload = {
       owner: 'anthropic',
       url: 'https://github.com/anthropic/claude-code',
       description: 'Coding agent',
+      descriptionZh: '编程智能体',
+      translationStatus: 'translated',
       homepage: '',
       language: 'TypeScript',
       stars: 1200,
@@ -34,6 +36,8 @@ const payload: StarsPayload = {
       owner: 'microsoft',
       url: 'https://github.com/microsoft/playwright',
       description: 'Browser automation',
+      descriptionZh: '',
+      translationStatus: 'fallback',
       homepage: '',
       language: 'TypeScript',
       stars: 800,
@@ -57,7 +61,7 @@ describe('renderApp', () => {
 
     renderApp(root, payload)
 
-    expect(root.textContent).toContain('GitHub Stars Hub')
+    expect(root.textContent).toContain('GitHub Stars 收藏夹')
     expect(root.textContent).toContain('总计 2 个收藏')
     expect(root.textContent).toContain('anthropic/claude-code')
     expect(root.textContent).toContain('Automation')
@@ -72,5 +76,65 @@ describe('renderApp', () => {
     expect(root.querySelector('#category')?.getAttribute('aria-label')).toBe('按分类筛选')
     expect(root.querySelector('#language')?.getAttribute('aria-label')).toBe('按语言筛选')
     expect(root.querySelector('#sort')?.getAttribute('aria-label')).toBe('排序方式')
+    expect(root.textContent).toContain('仓库作者：anthropic')
+    expect(root.textContent).toContain('星标索引')
+  })
+
+  it('defaults to zh descriptions and falls back to original when translation is missing', () => {
+    const root = document.createElement('div')
+
+    renderApp(root, payload)
+
+    const descriptions = Array.from(root.querySelectorAll('.repo-description')).map((node) => node.textContent)
+
+    expect(root.querySelector('#description-mode')?.getAttribute('aria-label')).toBe('描述显示模式')
+    expect((root.querySelector('#description-mode') as HTMLSelectElement | null)?.value).toBe('zh')
+    expect(descriptions).toContain('编程智能体')
+    expect(descriptions).toContain('Browser automation')
+  })
+
+  it('switches repo cards to original descriptions without affecting search behavior', () => {
+    const root = document.createElement('div')
+
+    renderApp(root, payload)
+
+    const mode = root.querySelector('#description-mode') as HTMLSelectElement | null
+    expect(mode).not.toBeNull()
+    mode!.value = 'original'
+    mode!.dispatchEvent(new Event('change', { bubbles: true }))
+
+    const descriptions = Array.from(root.querySelectorAll('.repo-description')).map((node) => node.textContent)
+    expect(descriptions).toContain('Coding agent')
+    expect(descriptions).toContain('Browser automation')
+    expect(root.textContent).not.toContain('编程智能体')
+
+    const query = root.querySelector('#query') as HTMLInputElement | null
+    expect(query).not.toBeNull()
+    query!.value = 'coding agent'
+    query!.dispatchEvent(new Event('input', { bubbles: true }))
+
+    expect(root.textContent).toContain('anthropic/claude-code')
+    expect(root.textContent).not.toContain('microsoft/playwright')
+    expect(root.textContent).toContain('Coding agent')
+  })
+
+  it('keeps chinese search working when original descriptions are displayed', () => {
+    const root = document.createElement('div')
+
+    renderApp(root, payload)
+
+    const mode = root.querySelector('#description-mode') as HTMLSelectElement | null
+    expect(mode).not.toBeNull()
+    mode!.value = 'original'
+    mode!.dispatchEvent(new Event('change', { bubbles: true }))
+
+    const query = root.querySelector('#query') as HTMLInputElement | null
+    expect(query).not.toBeNull()
+    query!.value = '智能体'
+    query!.dispatchEvent(new Event('input', { bubbles: true }))
+
+    expect(root.textContent).toContain('anthropic/claude-code')
+    expect(root.textContent).not.toContain('microsoft/playwright')
+    expect(root.textContent).toContain('Coding agent')
   })
 })

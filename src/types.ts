@@ -1,19 +1,15 @@
-export const CATEGORIES = [
-  'AI / LLM',
-  'Frontend',
-  'Backend',
-  'Fullstack',
-  'DevTools',
-  'CLI',
-  'Data / Database',
-  'Automation',
-  'Infra / Ops',
-  'Learning / Docs',
-  'Design',
-  'Misc'
-] as const
+import categories from './categories.json'
+
+export const CATEGORIES = categories as readonly string[]
 
 export type Category = (typeof CATEGORIES)[number]
+
+export type TranslationStatus = 'translated' | 'fallback' | 'skipped'
+
+export interface TranslationEntry {
+  source: string
+  translated: string
+}
 
 export interface StarRepo {
   fullName: string
@@ -21,6 +17,8 @@ export interface StarRepo {
   owner: string
   url: string
   description: string
+  descriptionZh: string
+  translationStatus: TranslationStatus
   homepage: string
   language: string
   stars: number

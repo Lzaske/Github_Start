@@ -34,6 +34,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run data:fetch
 
+      - name: Translate descriptions
+        env:
+          TRANSLATION_PROVIDER: ${{ vars.TRANSLATION_PROVIDER }}
+          TRANSLATION_API_KEY: ${{ secrets.TRANSLATION_API_KEY }}
+        run: npm run data:translate
+
       - name: Build stars data
         run: npm run data:build
 
