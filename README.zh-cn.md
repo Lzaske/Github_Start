@@ -101,7 +101,7 @@
 
 我把自己的 GitHub Stars 自动汇总到了一个可搜索、可分类的页面里，方便后续查找。
 
-- 在线浏览：启用 GitHub Pages 后填写仓库 Pages 地址
+- 在线浏览：https://lzaske.github.io/Github_Start/
 - 数据来源：GitHub Stars
 - 更新方式：每日自动同步，也支持手动触发 GitHub Actions
 
