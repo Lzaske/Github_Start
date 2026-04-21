@@ -111,18 +111,27 @@
 2. 在仓库 Secrets and variables → Actions 中添加：
    - `STARS_OWNER`：你的 GitHub 用户名
    - `GH_PAT`：可读取 starred repositories 的 Personal Access Token
-   - `TRANSLATION_API_KEY`：翻译服务的 API Key（启用中文描述时需要）
+   - `TRANSLATION_PROVIDER`：翻译提供商名称；使用 OpenAI 时设置为 `openai`
+   - `OPENAI_API_KEY`：OpenAI API Key（启用 OpenAI 中文描述翻译时必需）
+   - `OPENAI_RESPONSES_URL`：可选，自定义 OpenAI 兼容接口地址；例如 `https://proxy.lzaske.xyz/v1/responses`
+   - `OPENAI_TRANSLATION_MODEL`：可选，默认 `gpt-5.4-mini`
 3. 如需手动修正分类、备注、置顶或隐藏仓库，编辑 `data/overrides.json`。
 4. 若要启用仓库描述翻译，在 Actions 或本地环境中设置：
-   - `TRANSLATION_PROVIDER`：翻译提供商名称（GitHub Actions 建议放在 Variables）
-   - `TRANSLATION_API_KEY`：对应提供商的 API Key
+   - `TRANSLATION_PROVIDER=openai`
+   - `OPENAI_API_KEY`
+   - `OPENAI_RESPONSES_URL=https://proxy.lzaske.xyz/v1/responses`（可选，未设置时默认官方地址）
+   - `OPENAI_TRANSLATION_MODEL=gpt-5.4-mini`（默认值，可按需覆盖）
 
 ### 中文描述翻译
 
 - 工作流会在 `data:build` 之前先执行 `data:translate`，将仓库英文描述写入 `data/translations.json`。
+- OpenAI 提供商通过 Responses API 批量翻译仓库描述，并要求返回严格 JSON，以便稳定写入缓存。
+- 使用 OpenAI 时请配置 `TRANSLATION_PROVIDER=openai`、`OPENAI_API_KEY`，以及可选的 `OPENAI_RESPONSES_URL`、`OPENAI_TRANSLATION_MODEL`（默认 `gpt-5.4-mini`）。
+- 成功翻译后，缓存会记录 `provider`、`model` 和 `updatedAt` 元数据，便于追踪实际使用的 OpenAI 模型。
 - 当翻译命中时，页面默认显示中文描述；若没有翻译结果，会自动回退到原始描述。
 - 搜索会同时匹配原始描述与中文描述，因此用中文关键词也能找到对应仓库。
 - 若未配置翻译提供商或 API Key，翻译步骤会安全跳过，不影响数据构建与站点发布。
+- 若 OpenAI 请求失败，现有 `data/translations.json` 缓存会被完整保留，流程会以安全跳过方式继续，不会破坏已有翻译结果。
 
 ### `data/overrides.json` 示例
 

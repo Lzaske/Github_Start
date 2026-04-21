@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import { buildStarsPayload, runBuildPipeline } from '../scripts/build-stars-data.mjs'
 import {
+  buildOpenAIRequestBody,
   collectReposNeedingTranslation,
   mergeTranslations,
+  parseOpenAITranslations,
   runTranslationPipeline
 } from '../scripts/translate-descriptions.mjs'
 
@@ -219,6 +221,27 @@ describe('translate-descriptions helpers', () => {
     )
 
     expect(pending.map((repo) => repo.full_name)).toEqual(['stale/repo', 'new/repo'])
+  })
+
+  it('retries repos whose cached translation is empty for the same source', () => {
+    const pending = collectReposNeedingTranslation(
+      [
+        {
+          repo: {
+            full_name: 'retry/repo',
+            description: 'Needs retry'
+          }
+        }
+      ],
+      {
+        'retry/repo': {
+          source: 'Needs retry',
+          translated: ''
+        }
+      }
+    )
+
+    expect(pending.map((repo) => repo.full_name)).toEqual(['retry/repo'])
   })
 
   it('merges translated entries into cache while preserving untouched entries', () => {
@@ -491,6 +514,51 @@ describe('translate-descriptions helpers', () => {
     ])
   })
 
+  it('recovers from malformed translation cache shape by rebuilding from empty cache', async () => {
+    const writes: Array<{ path: string; content: string }> = []
+    const logs: string[] = []
+
+    const result = await runTranslationPipeline({
+      env: { TRANSLATION_PROVIDER: 'mock', TRANSLATION_API_KEY: 'test-key' },
+      log: (message) => logs.push(message),
+      read: async (path) => {
+        if (path === 'data/stars.raw.json') {
+          return JSON.stringify([
+            {
+              repo: {
+                full_name: 'new/repo',
+                description: 'Needs translation'
+              }
+            }
+          ])
+        }
+
+        return JSON.stringify([{ invalid: true }])
+      },
+      write: async (path, content) => {
+        writes.push({ path, content })
+      }
+    })
+
+    expect(result).toEqual({ skipped: false, pending: 1 })
+    expect(logs).toContain('Translation cache at data/translations.json is malformed, rebuilding from empty cache')
+    expect(writes).toEqual([
+      {
+        path: 'data/translations.json',
+        content: `${JSON.stringify(
+          {
+            'new/repo': {
+              source: 'Needs translation',
+              translated: 'Needs translation'
+            }
+          },
+          null,
+          2
+        )}\n`
+      }
+    ])
+  })
+
   it('updates translation cache for pending repositories when supported provider is configured', async () => {
     const reads = {
       'data/stars.raw.json': JSON.stringify([
@@ -548,6 +616,657 @@ describe('translate-descriptions helpers', () => {
     ])
     expect(logs).toContain('Using translation provider "mock"')
     expect(logs).toContain('Updated translations for 1 repositories using provider "mock"')
+  })
+
+  it('builds openai request body with strict json schema and default model', () => {
+    const body = buildOpenAIRequestBody([
+      {
+        full_name: 'openai/openai-node',
+        description: 'The official TypeScript library for the OpenAI API'
+      }
+    ])
+
+    expect(body).toMatchObject({
+      model: 'gpt-5.4-mini',
+      text: {
+        format: {
+          type: 'json_schema',
+          strict: true
+        }
+      }
+    })
+    expect(body.text.format.schema).toMatchObject({
+      type: 'object',
+      required: ['translations'],
+      additionalProperties: false,
+      properties: {
+        translations: {
+          type: 'array'
+        }
+      }
+    })
+    expect(JSON.stringify(body)).toContain('fullName')
+    expect(JSON.stringify(body)).toContain('descriptionZh')
+    expect(JSON.stringify(body)).toContain('openai/openai-node')
+  })
+
+  it('parses openai response json into translation entries', () => {
+    const translated = parseOpenAITranslations({
+      output: [
+        {
+          type: 'message',
+          content: [
+            {
+              type: 'output_text',
+              text: JSON.stringify({
+                translations: [
+                  {
+                    fullName: 'openai/openai-node',
+                    descriptionZh: 'OpenAI API 的官方 TypeScript 库'
+                  },
+                  {
+                    fullName: 'vercel/ai',
+                    descriptionZh: '用于构建 AI 应用的 SDK'
+                  }
+                ]
+              })
+            }
+          ]
+        }
+      ]
+    })
+
+    expect(translated).toEqual({
+      'openai/openai-node': 'OpenAI API 的官方 TypeScript 库',
+      'vercel/ai': '用于构建 AI 应用的 SDK'
+    })
+  })
+
+  it('rejects openai responses that omit requested repositories', () => {
+    expect(() =>
+      parseOpenAITranslations(
+        {
+          output_text: JSON.stringify({
+            translations: [
+              {
+                fullName: 'openai/openai-node',
+                descriptionZh: 'OpenAI API 的官方 TypeScript 库'
+              }
+            ]
+          })
+        },
+        ['openai/openai-node', 'vercel/ai']
+      )
+    ).toThrow(/missing repositories: vercel\/ai/i)
+  })
+
+  it('rejects openai responses with duplicate fullName values', () => {
+    expect(() =>
+      parseOpenAITranslations({
+        output_text: JSON.stringify({
+          translations: [
+            {
+              fullName: 'openai/openai-node',
+              descriptionZh: '译文一'
+            },
+            {
+              fullName: 'openai/openai-node',
+              descriptionZh: '译文二'
+            }
+          ]
+        })
+      })
+    ).toThrow(/duplicate fullName/i)
+  })
+
+  it('rejects openai responses with extra repositories', () => {
+    expect(() =>
+      parseOpenAITranslations(
+        {
+          output_text: JSON.stringify({
+            translations: [
+              {
+                fullName: 'openai/openai-node',
+                descriptionZh: 'OpenAI API 的官方 TypeScript 库'
+              },
+              {
+                fullName: 'extra/repo',
+                descriptionZh: '额外仓库'
+              }
+            ]
+          })
+        },
+        ['openai/openai-node']
+      )
+    ).toThrow(/unexpected repository: extra\/repo/i)
+  })
+
+  it('rejects openai responses with malformed translation entries', () => {
+    expect(() =>
+      parseOpenAITranslations({
+        output_text: JSON.stringify({
+          translations: [
+            {
+              fullName: 'openai/openai-node'
+            }
+          ]
+        })
+      })
+    ).toThrow(/invalid descriptionZh/i)
+
+    expect(() =>
+      parseOpenAITranslations({
+        output_text: JSON.stringify({
+          translations: [
+            {
+              fullName: '   ',
+              descriptionZh: '无效'
+            }
+          ]
+        })
+      })
+    ).toThrow(/invalid fullName/i)
+  })
+
+  it('rejects openai responses without a translations array', () => {
+    expect(() => parseOpenAITranslations({ output_text: JSON.stringify({}) })).toThrow(/translations array/i)
+  })
+
+  it('rejects openai responses without nested text output', () => {
+    expect(() => parseOpenAITranslations({ output: [{ type: 'message', content: [] }] })).toThrow(/missing text output/i)
+  })
+
+  it('updates translation cache with openai provider using injected fetch implementation', async () => {
+    const reads = {
+      'data/stars.raw.json': JSON.stringify([
+        {
+          repo: {
+            full_name: 'openai/openai-node',
+            description: 'The official TypeScript library for the OpenAI API'
+          }
+        }
+      ]),
+      'data/translations.json': JSON.stringify({})
+    }
+    const writes: Array<{ path: string; content: string }> = []
+    const logs: string[] = []
+    const fetchCalls: Array<{ url: string; init: RequestInit | undefined }> = []
+
+    const result = await runTranslationPipeline({
+      env: {
+        TRANSLATION_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'openai-test-key',
+        OPENAI_RESPONSES_URL: 'https://proxy.lzaske.xyz/v1/responses'
+      },
+      log: (message) => logs.push(message),
+      read: async (path) => reads[path as keyof typeof reads],
+      write: async (path, content) => {
+        writes.push({ path, content })
+      },
+      fetchImpl: async (url, init) => {
+        fetchCalls.push({ url: String(url), init })
+
+        return new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: JSON.stringify({
+                      translations: [
+                        {
+                          fullName: 'openai/openai-node',
+                          descriptionZh: 'OpenAI API 的官方 TypeScript 库'
+                        }
+                      ]
+                    })
+                  }
+                ]
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          }
+        )
+      }
+    })
+
+    expect(result).toEqual({ skipped: false, pending: 1 })
+    expect(fetchCalls).toHaveLength(1)
+    expect(fetchCalls[0]?.url).toBe('https://proxy.lzaske.xyz/v1/responses')
+    expect(fetchCalls[0]?.init).toMatchObject({
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer openai-test-key'
+      }
+    })
+    expect(JSON.parse(String(fetchCalls[0]?.init?.body))).toMatchObject({
+      model: 'gpt-5.4-mini'
+    })
+    expect(writes).toHaveLength(1)
+    expect(writes[0]?.path).toBe('data/translations.json')
+    expect(JSON.parse(writes[0]!.content)['openai/openai-node']).toMatchObject({
+      source: 'The official TypeScript library for the OpenAI API',
+      translated: 'OpenAI API 的官方 TypeScript 库',
+      provider: 'openai',
+      model: 'gpt-5.4-mini',
+      updatedAt: expect.any(String)
+    })
+    expect(logs).toContain('Using translation provider "openai"')
+    expect(logs).toContain('Updated translations for 1 repositories using provider "openai"')
+  })
+
+  it('persists configured openai model metadata in the translation cache', async () => {
+    const reads = {
+      'data/stars.raw.json': JSON.stringify([
+        {
+          repo: {
+            full_name: 'openai/openai-node',
+            description: 'The official TypeScript library for the OpenAI API'
+          }
+        }
+      ]),
+      'data/translations.json': JSON.stringify({})
+    }
+    const writes: Array<{ path: string; content: string }> = []
+
+    const result = await runTranslationPipeline({
+      env: {
+        TRANSLATION_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'openai-test-key',
+        OPENAI_TRANSLATION_MODEL: 'gpt-5.4'
+      },
+      log: () => {},
+      read: async (path) => reads[path as keyof typeof reads],
+      write: async (path, content) => {
+        writes.push({ path, content })
+      },
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: JSON.stringify({
+                      translations: [
+                        {
+                          fullName: 'openai/openai-node',
+                          descriptionZh: 'OpenAI API 的官方 TypeScript 库'
+                        }
+                      ]
+                    })
+                  }
+                ]
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          }
+        )
+    })
+
+    expect(result).toEqual({ skipped: false, pending: 1 })
+    expect(JSON.parse(writes[0]!.content)).toEqual({
+      'openai/openai-node': {
+        source: 'The official TypeScript library for the OpenAI API',
+        translated: 'OpenAI API 的官方 TypeScript 库',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        updatedAt: expect.any(String)
+      }
+    })
+  })
+
+  it('retries empty cached translations on the next pipeline run', async () => {
+    const reads = {
+      'data/stars.raw.json': JSON.stringify([
+        {
+          repo: {
+            full_name: 'retry/repo',
+            description: 'Needs translation'
+          }
+        }
+      ]),
+      'data/translations.json': JSON.stringify({
+        'retry/repo': {
+          source: 'Needs translation',
+          translated: ''
+        }
+      })
+    }
+    const writes: Array<{ path: string; content: string }> = []
+
+    const result = await runTranslationPipeline({
+      env: { TRANSLATION_PROVIDER: 'mock', TRANSLATION_API_KEY: 'test-key' },
+      read: async (path) => reads[path as keyof typeof reads],
+      write: async (path, content) => {
+        writes.push({ path, content })
+      },
+      log: () => {}
+    })
+
+    expect(result).toEqual({ skipped: false, pending: 1 })
+    expect(writes).toEqual([
+      {
+        path: 'data/translations.json',
+        content: `${JSON.stringify(
+          {
+            'retry/repo': {
+              source: 'Needs translation',
+              translated: 'Needs translation'
+            }
+          },
+          null,
+          2
+        )}\n`
+      }
+    ])
+  })
+
+  it('keeps the old cache and skips safely when openai responses omit requested repositories', async () => {
+    const logs: string[] = []
+    const writes: Array<{ path: string; content: string }> = []
+
+    const result = await runTranslationPipeline({
+      env: {
+        TRANSLATION_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'openai-test-key'
+      },
+      log: (message) => logs.push(message),
+      read: async (path) => {
+        if (path === 'data/stars.raw.json') {
+          return JSON.stringify([
+            {
+              repo: {
+                full_name: 'openai/openai-node',
+                description: 'The official TypeScript library for the OpenAI API'
+              }
+            },
+            {
+              repo: {
+                full_name: 'vercel/ai',
+                description: 'AI SDK'
+              }
+            }
+          ])
+        }
+
+        return JSON.stringify({
+          'cached/repo': {
+            source: 'Existing description',
+            translated: '现有描述'
+          }
+        })
+      },
+      write: async (path, content) => {
+        writes.push({ path, content })
+      },
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: JSON.stringify({
+                      translations: [
+                        {
+                          fullName: 'openai/openai-node',
+                          descriptionZh: 'OpenAI API 的官方 TypeScript 库'
+                        }
+                      ]
+                    })
+                  }
+                ]
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          }
+        )
+    })
+
+    expect(result).toEqual({ skipped: true, pending: 2 })
+    expect(writes).toEqual([])
+    expect(logs.some((message) => /OpenAI translation failed/i.test(message))).toBe(true)
+  })
+
+  it('keeps the old cache and skips safely when openai requests fail', async () => {
+    const logs: string[] = []
+    const writes: Array<{ path: string; content: string }> = []
+
+    const result = await runTranslationPipeline({
+      env: {
+        TRANSLATION_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'openai-test-key'
+      },
+      log: (message) => logs.push(message),
+      read: async (path) => {
+        if (path === 'data/stars.raw.json') {
+          return JSON.stringify([
+            {
+              repo: {
+                full_name: 'openai/openai-node',
+                description: 'The official TypeScript library for the OpenAI API'
+              }
+            }
+          ])
+        }
+
+        return JSON.stringify({
+          'cached/repo': {
+            source: 'Existing description',
+            translated: '现有描述'
+          }
+        })
+      },
+      write: async (path, content) => {
+        writes.push({ path, content })
+      },
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: { message: 'provider overloaded' } }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' }
+        })
+    })
+
+    expect(result).toEqual({ skipped: true, pending: 1 })
+    expect(writes).toEqual([])
+    expect(logs.some((message) => /503.*provider overloaded/i.test(message))).toBe(true)
+  })
+
+  it('batches openai translation requests for large pending sets', async () => {
+    const writes: Array<{ path: string; content: string }> = []
+    const fetchBodies: Array<{ translations: Array<{ fullName: string; description: string }> }> = []
+    const rawRepos = Array.from({ length: 5 }, (_, index) => ({
+      repo: {
+        full_name: `owner/repo-${index + 1}`,
+        description: `Description ${index + 1}`
+      }
+    }))
+
+    const result = await runTranslationPipeline({
+      env: {
+        TRANSLATION_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'openai-test-key',
+        OPENAI_TRANSLATION_BATCH_SIZE: '2'
+      },
+      log: () => {},
+      read: async (path) => (path === 'data/stars.raw.json' ? JSON.stringify(rawRepos) : JSON.stringify({})),
+      write: async (path, content) => {
+        writes.push({ path, content })
+      },
+      fetchImpl: async (_url, init) => {
+        const requestBody = JSON.parse(String(init?.body))
+        const inputJson = JSON.parse(requestBody.input[1].content[0].text)
+        fetchBodies.push(inputJson)
+
+        return new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: JSON.stringify({
+                      translations: inputJson.translations.map((repo: { fullName: string; description: string }) => ({
+                        fullName: repo.fullName,
+                        descriptionZh: `${repo.description} zh`
+                      }))
+                    })
+                  }
+                ]
+              }
+            ]
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+    })
+
+    expect(result).toEqual({ skipped: false, pending: 5 })
+    expect(fetchBodies.map((body) => body.translations.map((repo) => repo.fullName))).toEqual([
+      ['owner/repo-1', 'owner/repo-2'],
+      ['owner/repo-3', 'owner/repo-4'],
+      ['owner/repo-5']
+    ])
+    expect(Object.keys(JSON.parse(writes[0]!.content))).toHaveLength(5)
+  })
+
+  it('retries retryable openai failures with bounded attempts', async () => {
+    let attempts = 0
+
+    const result = await runTranslationPipeline({
+      env: {
+        TRANSLATION_PROVIDER: 'openai',
+        OPENAI_API_KEY: '  openai-test-key  ',
+        OPENAI_TRANSLATION_MAX_RETRIES: '2',
+        OPENAI_TRANSLATION_RETRY_BASE_DELAY_MS: '1'
+      },
+      log: () => {},
+      read: async (path) =>
+        path === 'data/stars.raw.json'
+          ? JSON.stringify([
+              {
+                repo: {
+                  full_name: 'openai/openai-node',
+                  description: 'The official TypeScript library for the OpenAI API'
+                }
+              }
+            ])
+          : JSON.stringify({}),
+      write: async () => {},
+      fetchImpl: async (_url, init) => {
+        attempts += 1
+
+        if (attempts < 3) {
+          return new Response(JSON.stringify({ error: { message: 'provider overloaded' } }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+
+        expect(init?.headers).toMatchObject({ authorization: 'Bearer openai-test-key' })
+
+        return new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: JSON.stringify({
+                      translations: [
+                        {
+                          fullName: 'openai/openai-node',
+                          descriptionZh: 'OpenAI API 的官方 TypeScript 库'
+                        }
+                      ]
+                    })
+                  }
+                ]
+              }
+            ]
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+      }
+    })
+
+    expect(result).toEqual({ skipped: false, pending: 1 })
+    expect(attempts).toBe(3)
+  })
+
+  it('fails with a clear error when raw stars data is not an array of repo entries', async () => {
+    await expect(
+      runTranslationPipeline({
+        env: { TRANSLATION_PROVIDER: 'mock', TRANSLATION_API_KEY: 'test-key' },
+        log: () => {},
+        read: async (path) => {
+          if (path === 'data/stars.raw.json') {
+            return JSON.stringify({ repo: { full_name: 'bad/repo' } })
+          }
+
+          return JSON.stringify({})
+        },
+        write: async () => {
+          throw new Error('should not write invalid raw data results')
+        }
+      })
+    ).rejects.toThrow(/raw stars data must be an array of items with repo objects/i)
+  })
+
+  it('fails with a clear error when raw stars data entries are missing repo objects', async () => {
+    await expect(
+      runTranslationPipeline({
+        env: { TRANSLATION_PROVIDER: 'mock', TRANSLATION_API_KEY: 'test-key' },
+        log: () => {},
+        read: async (path) => {
+          if (path === 'data/stars.raw.json') {
+            return JSON.stringify([{ notRepo: true }])
+          }
+
+          return JSON.stringify({})
+        },
+        write: async () => {
+          throw new Error('should not write invalid raw data results')
+        }
+      })
+    ).rejects.toThrow(/raw stars data contains an invalid entry at index 0/i)
+  })
+
+  it('fails with a clear error when raw stars data repo.full_name is invalid', async () => {
+    await expect(
+      runTranslationPipeline({
+        env: { TRANSLATION_PROVIDER: 'mock', TRANSLATION_API_KEY: 'test-key' },
+        log: () => {},
+        read: async (path) => {
+          if (path === 'data/stars.raw.json') {
+            return JSON.stringify([{ repo: { full_name: '   ', description: 'bad' } }])
+          }
+
+          return JSON.stringify({})
+        },
+        write: async () => {
+          throw new Error('should not write invalid raw data results')
+        }
+      })
+    ).rejects.toThrow(/invalid repo\.full_name at index 0/i)
   })
 })
 

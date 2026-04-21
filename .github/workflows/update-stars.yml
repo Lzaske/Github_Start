@@ -38,6 +38,9 @@ jobs:
         env:
           TRANSLATION_PROVIDER: ${{ vars.TRANSLATION_PROVIDER }}
           TRANSLATION_API_KEY: ${{ secrets.TRANSLATION_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_RESPONSES_URL: ${{ vars.OPENAI_RESPONSES_URL }}
+          OPENAI_TRANSLATION_MODEL: ${{ vars.OPENAI_TRANSLATION_MODEL }}
         run: npm run data:translate
 
       - name: Build stars data

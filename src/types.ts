@@ -9,6 +9,9 @@ export type TranslationStatus = 'translated' | 'fallback' | 'skipped'
 export interface TranslationEntry {
   source: string
   translated: string
+  provider?: string
+  model?: string
+  updatedAt?: string
 }
 
 export interface StarRepo {
