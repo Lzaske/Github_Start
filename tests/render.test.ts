@@ -137,4 +137,31 @@ describe('renderApp', () => {
     expect(root.textContent).not.toContain('microsoft/playwright')
     expect(root.textContent).toContain('Coding agent')
   })
+
+  it('keeps search input focused while typing across rerenders', () => {
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    renderApp(root, payload)
+
+    const query = root.querySelector('#query') as HTMLInputElement | null
+    expect(query).not.toBeNull()
+
+    query!.focus()
+    query!.value = 'c'
+    query!.dispatchEvent(new Event('input', { bubbles: true }))
+
+    const queryAfterFirstInput = root.querySelector('#query') as HTMLInputElement | null
+
+    expect(document.activeElement).toBe(queryAfterFirstInput)
+
+    queryAfterFirstInput!.value = 'cl'
+    queryAfterFirstInput!.dispatchEvent(new Event('input', { bubbles: true }))
+
+    expect(document.activeElement).toBe(root.querySelector('#query'))
+    expect(root.textContent).toContain('anthropic/claude-code')
+    expect(root.textContent).not.toContain('microsoft/playwright')
+
+    root.remove()
+  })
 })
